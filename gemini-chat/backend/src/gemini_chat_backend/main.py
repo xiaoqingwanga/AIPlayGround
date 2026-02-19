@@ -6,7 +6,9 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from gemini_chat_backend.api.routes import setup_routes
 from gemini_chat_backend.config import settings
+from gemini_chat_backend.tools import register_tools
 from gemini_chat_backend.utils.logging import configure_logging, get_logger
 
 # Configure logging on module load
@@ -30,6 +32,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         project_name=settings.PROJECT_NAME,
         version="0.1.0",
     )
+
+    # Register tools
+    register_tools()
 
     yield
 
@@ -67,6 +72,9 @@ def create_app() -> FastAPI:
     async def health_check() -> dict[str, str]:
         """Health check endpoint."""
         return {"status": "healthy"}
+
+    # Set up API routes
+    setup_routes(app)
 
     logger.info(
         "FastAPI application created",

@@ -1,7 +1,14 @@
 """Tools endpoint."""
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
+
+from gemini_chat_backend.tools.registry import get_tool_registry
+from gemini_chat_backend.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -10,35 +17,35 @@ class ToolExecuteRequest(BaseModel):
     """Tool execution request."""
 
     tool_name: str
-    parameters: dict
+    parameters: dict[str, Any]
 
 
 class ToolExecuteResponse(BaseModel):
     """Tool execution response."""
 
     success: bool
-    result: dict | None = None
+    result: dict[str, Any] | None = None
     error: str | None = None
 
 
 @router.get("/tools", tags=["tools"])
-async def list_tools() -> dict:
+async def list_tools() -> dict[str, Any]:
     """List available tools.
 
     Returns:
         List of available tools
     """
-    # Placeholder - will be implemented with tool registry
+    registry = get_tool_registry()
+    tools = registry.list_tools()
+
     return {
         "tools": [
             {
-                "name": "file_read",
-                "description": "Read a file from the filesystem",
-            },
-            {
-                "name": "file_write",
-                "description": "Write content to a file",
-            },
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            }
+            for tool in tools
         ]
     }
 
@@ -58,8 +65,34 @@ async def execute_tool(
     Raises:
         HTTPException: If tool execution fails
     """
-    # Placeholder - will be implemented with tool registry
-    return ToolExecuteResponse(
-        success=False,
-        error="Tool execution not yet implemented",
-    )
+    registry = get_tool_registry()
+    tool = registry.get(request.tool_name)
+
+    if not tool:
+        logger.warning(f"Tool not found: {request.tool_name}")
+        return ToolExecuteResponse(
+            success=False,
+            error=f"Tool '{request.tool_name}' not found",
+        )
+
+    try:
+        logger.info(f"Executing tool: {request.tool_name}")
+        result = await tool.execute(**request.parameters)
+
+        if result.success:
+            logger.info(f"Tool executed successfully: {request.tool_name}")
+        else:
+            logger.warning(f"Tool execution failed: {request.tool_name} - {result.error}")
+
+        return ToolExecuteResponse(
+            success=result.success,
+            result=result.result,
+            error=result.error,
+        )
+
+    except Exception as e:
+        logger.error(f"Unexpected error executing tool {request.tool_name}: {e}")
+        return ToolExecuteResponse(
+            success=False,
+            error=str(e),
+        )

@@ -92,36 +92,72 @@ class DeepSeekClient:
             message_count=len(prepared_messages),
             has_tools=bool(tools),
             stream=stream,
+            payload=payload,
         )
 
         try:
             async with httpx.AsyncClient() as client:
-                async with client.stream(
-                    "POST",
-                    self.api_url,
-                    headers=self.headers,
-                    json=payload,
-                    timeout=120.0,
-                ) as response:
-                    response.raise_for_status()
+                if stream:
+                    # Streaming mode
+                    async with client.stream(
+                        "POST",
+                        self.api_url,
+                        headers=self.headers,
+                        json=payload,
+                        timeout=120.0,
+                    ) as response:
+                        # Check for errors before streaming
+                        if response.status_code >= 400:
+                            # Try to read error body while stream is still open
+                            try:
+                                error_body = await response.aread()
+                                error_detail = error_body.decode()
+                                error_msg = f"DeepSeek API error: {response.status_code} - {error_detail}"
+                                logger.error(
+                                    "DeepSeek API error details",
+                                    status_code=response.status_code,
+                                    error_body=error_detail,
+                                    request_payload=payload,
+                                )
+                            except Exception:
+                                error_msg = f"DeepSeek API error: {response.status_code}"
+                                logger.error(
+                                    "DeepSeek API error",
+                                    status_code=response.status_code,
+                                    request_payload=payload,
+                                )
+                            raise DeepSeekError(error_msg)
 
-                    if stream:
                         # Stream response chunks
                         async for chunk in self._parse_stream(response):
                             yield chunk
-                    else:
-                        # Return complete response
-                        content = await response.aread()
-                        data = json.loads(content)
-                        yield data
+                else:
+                    # Non-streaming mode
+                    response = await client.post(
+                        self.api_url,
+                        headers=self.headers,
+                        json=payload,
+                        timeout=120.0,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    yield data
 
         except httpx.HTTPStatusError as e:
             error_msg = f"DeepSeek API error: {e.response.status_code}"
-            try:
-                error_data = await e.response.aread()
-                error_msg += f" - {error_data.decode()}"
-            except Exception:
-                pass
+            # For non-streaming errors, we can still try to read the body
+            if not stream:
+                try:
+                    error_detail = e.response.text
+                    error_msg += f" - {error_detail}"
+                    logger.error(
+                        "DeepSeek API error details",
+                        status_code=e.response.status_code,
+                        error_body=error_detail,
+                        request_payload=payload,
+                    )
+                except Exception:
+                    pass
             logger.error(error_msg)
             raise DeepSeekError(error_msg) from e
 

@@ -18,14 +18,14 @@ class Message(BaseModel):
 
     role: Literal["system", "user", "assistant", "tool"]
     content: str
-    tool_calls: Optional[List[Dict[str, Any]]] = None
-    tool_call_id: Optional[str] = None
-    reasoning_content: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = Field(None, alias="toolCalls")
+    tool_call_id: Optional[str] = Field(None, alias="toolCallId")
+    reasoning_content: Optional[str] = Field(None, alias="reasoningContent")
 
-    class Config:
-        """Pydantic config."""
-
-        extra = "allow"
+    model_config = {
+        "populate_by_name": True,
+        "extra": "allow",
+    }
 
 
 class ChatRequest(BaseModel):
@@ -46,7 +46,7 @@ class StreamEvent(BaseModel):
     """Server-sent event for streaming responses.
 
     Attributes:
-        type: Event type (reasoning, content, tool_call, tool_result, tool_error, react_step, done)
+        type: Event type (reasoning, content, tool_call, tool_result, tool_error, react_step, done, error)
         data: Event data
     """
 
@@ -58,6 +58,7 @@ class StreamEvent(BaseModel):
         "tool_error",
         "react_step",
         "done",
+        "error",
     ]
     data: Any
 

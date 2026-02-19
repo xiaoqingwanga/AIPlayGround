@@ -150,15 +150,15 @@ export default function ChatPage() {
     });
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch('http://localhost:8000/api/v1/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: updatedMessages.map(m => ({
             role: m.role,
             content: m.content,
-            // Include tool_calls for assistant messages
-            tool_calls: m.toolCalls?.length ? m.toolCalls.map(tc => ({
+            // Include toolCalls for assistant messages (using camelCase alias)
+            toolCalls: m.toolCalls?.length ? m.toolCalls.map(tc => ({
               id: tc.id,
               type: 'function' as const,
               function: {
@@ -166,10 +166,11 @@ export default function ChatPage() {
                 arguments: JSON.stringify(tc.parameters),
               },
             })) : undefined,
-            // Include tool_call_id for tool messages
-            tool_call_id: m.toolCallId,
+            // Include toolCallId for tool messages (using camelCase alias)
+            toolCallId: m.toolCallId,
             reasoningContent: m.reasoningContent,
           })),
+          stream: true,
         }),
       });
 
@@ -181,6 +182,9 @@ export default function ChatPage() {
       let currentReasoning = '';
       let currentReactSteps: ReActStep[] = [];
       let currentToolCalls: ToolCall[] = [];
+      // Track tool response messages separately to maintain correct order
+      // Order must be: assistant_with_tool_calls -> tool_responses
+      let toolResponseMessages: Message[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -222,7 +226,7 @@ export default function ChatPage() {
                     ? { ...tc, result: event.data.result }
                     : tc
                 );
-                // Add tool message to conversation history
+                // Track tool message separately (don't add to updatedMessages yet)
                 const toolMessage: Message = {
                   id: generateId(),
                   role: 'tool',
@@ -230,7 +234,7 @@ export default function ChatPage() {
                   toolCallId: event.data.toolCallId,
                   timestamp: Date.now(),
                 };
-                updatedMessages.push(toolMessage);
+                toolResponseMessages.push(toolMessage);
                 break;
               case 'tool_error':
                 currentToolCalls = currentToolCalls.map(tc =>
@@ -238,7 +242,7 @@ export default function ChatPage() {
                     ? { ...tc, error: event.data.error }
                     : tc
                 );
-                // Add tool error message to conversation history
+                // Track tool error message separately
                 const toolErrorMessage: Message = {
                   id: generateId(),
                   role: 'tool',
@@ -246,20 +250,26 @@ export default function ChatPage() {
                   toolCallId: event.data.toolCallId,
                   timestamp: Date.now(),
                 };
-                updatedMessages.push(toolErrorMessage);
+                toolResponseMessages.push(toolErrorMessage);
                 break;
             }
 
-            // Update the message with current state
+            // Build messages in correct order for DeepSeek API:
+            // 1. updatedMessages (includes user message)
+            // 2. assistant message (with tool_calls if any)
+            // 3. tool response messages (with tool_call_id)
+            const assistantMsg = {
+              ...assistantMessage,
+              content: currentContent,
+              thinking: currentThinking,
+              reasoningContent: currentReasoning,
+              reactSteps: currentReactSteps,
+              toolCalls: currentToolCalls,
+            };
+            
+            // Update the message with current state in correct order
             updateConversation(currentConversationId, {
-              messages: [...updatedMessages, {
-                ...assistantMessage,
-                content: currentContent,
-                thinking: currentThinking,
-                reasoningContent: currentReasoning,
-                reactSteps: currentReactSteps,
-                toolCalls: currentToolCalls,
-              }],
+              messages: [...updatedMessages, assistantMsg, ...toolResponseMessages],
             });
           }
         }
@@ -340,7 +350,7 @@ export default function ChatPage() {
             </div>
           )}
 
-          {messages.map(message => (
+          {messages.filter(message => message.role !== 'tool').map(message => (
             <MessageBubble key={message.id} message={message} />
           ))}
 
@@ -380,7 +390,6 @@ export default function ChatPage() {
 }
 
 function MessageBubble({ message }: { message: Message }) {
-  const [showTools, setShowTools] = useState(true);
   const [showReAct, setShowReAct] = useState(true);
 
   const hasReactSteps = message.reactSteps && message.reactSteps.length > 0;
@@ -421,66 +430,7 @@ function MessageBubble({ message }: { message: Message }) {
             ))}
           </div>
         )}
-
-        {/* Tool Calls Section */}
-        {message.role === 'assistant' && message.toolCalls && message.toolCalls.length > 0 && (
-          <div className="mt-2 w-full">
-            <button
-              onClick={() => setShowTools(!showTools)}
-              className="text-sm text-gray-500 hover:text-gray-300 flex items-center gap-1"
-            >
-              <span>🔧</span>
-              {showTools ? 'Hide' : 'Show'} Tool Calls ({message.toolCalls.length})
-            </button>
-
-            {showTools && (
-              <div className="mt-2 space-y-2">
-                {message.toolCalls.map(toolCall => (
-                  <ToolCallCard key={toolCall.id} toolCall={toolCall} />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
-    </div>
-  );
-}
-
-function ToolCallCard({ toolCall }: { toolCall: ToolCall }) {
-  const [showResult, setShowResult] = useState(false);
-
-  return (
-    <div className="bg-gray-800 border border-gray-700 rounded-lg p-3">
-      <div className="flex justify-between items-start">
-        <span className="font-mono text-sm text-yellow-400">
-          {toolCall.name}
-        </span>
-        <span className="text-xs text-gray-500">
-          {new Date(toolCall.timestamp).toLocaleTimeString()}
-        </span>
-      </div>
-      <pre className="text-xs text-gray-400 mt-1 overflow-x-auto">
-        {JSON.stringify(toolCall.parameters, null, 2)}
-      </pre>
-
-      {(toolCall.result || toolCall.error) && (
-        <div className="mt-2">
-          <button
-            onClick={() => setShowResult(!showResult)}
-            className="text-xs text-gray-500 hover:text-gray-300"
-          >
-            {showResult ? 'Hide' : 'Show'} {toolCall.error ? 'Error' : 'Result'}
-          </button>
-          {showResult && (
-            <pre className={`text-xs mt-1 p-2 rounded overflow-x-auto ${
-              toolCall.error ? 'bg-red-900/30 text-red-300' : 'bg-green-900/30 text-green-300'
-            }`}>
-              {toolCall.error || JSON.stringify(toolCall.result, null, 2)}
-            </pre>
-          )}
-        </div>
-      )}
     </div>
   );
 }

@@ -1,0 +1,25 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "GeminiChat Backend",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "python": "${workspaceFolder}/gemini-chat/backend/.venv/bin/python",
+            "args": [
+                "gemini_chat_backend.main:app",
+                "--reload",
+                "--port",
+                "8000"
+            ],
+            "cwd": "${workspaceFolder}/gemini-chat/backend",
+            "env": {
+                "PYTHONPATH": "src",
+                "BACKEND_PORT": "8000"
+            },
+            "justMyCode": true,
+            "console": "integratedTerminal"
+        }
+    ]
+}

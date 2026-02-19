@@ -54,7 +54,6 @@ secrets/
 # =============================================================================
 
 # VS Code
-.vscode/
 *.code-workspace
 
 # IntelliJ / PyCharm / WebStorm

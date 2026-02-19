@@ -45,7 +45,7 @@ dev-backend:
 	@echo "Starting backend on port $(BACKEND_PORT)..."
 	cd backend && \
 		. .venv/bin/activate && \
-		uvicorn src.gemini_chat_backend.main:app --reload --port $(BACKEND_PORT)
+		PYTHONPATH=src uvicorn gemini_chat_backend.main:app --reload --port $(BACKEND_PORT)
 
 dev-frontend:
 	@echo "Starting frontend on port $(FRONTEND_PORT)..."

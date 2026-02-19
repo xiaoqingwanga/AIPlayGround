@@ -23,7 +23,13 @@ class ReActThought(BaseModel):
     content: str
     title: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    leads_to: Optional[Literal["response", "action"]] = None
+    leads_to: Optional[Literal["response", "action"]] = Field(
+        None, alias="leadsTo"
+    )
+
+    model_config = {
+        "populate_by_name": True,
+    }
 
 
 class ReActAction(BaseModel):
@@ -38,8 +44,12 @@ class ReActAction(BaseModel):
 
     id: str
     type: Literal["action"] = "action"
-    tool_call: Dict[str, Any]  # ToolCall serialized as dict
+    tool_call: Dict[str, Any] = Field(alias="toolCall")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+    model_config = {
+        "populate_by_name": True,
+    }
 
 
 class ReActObservation(BaseModel):
@@ -56,10 +66,14 @@ class ReActObservation(BaseModel):
 
     id: str
     type: Literal["observation"] = "observation"
-    action_id: str
+    action_id: str = Field(alias="actionId")
     result: Optional[Any] = None
     error: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+    model_config = {
+        "populate_by_name": True,
+    }
 
 
 # Union type for all ReAct steps
