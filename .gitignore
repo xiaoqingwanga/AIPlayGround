@@ -152,3 +152,4 @@ local/
 
 # Docker volumes (if using)
 volumes/
+.worktrees/
