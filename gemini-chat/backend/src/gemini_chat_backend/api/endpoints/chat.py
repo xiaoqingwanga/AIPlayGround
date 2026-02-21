@@ -1,18 +1,24 @@
 """Chat endpoint with streaming support and ReAct pattern."""
 
 import json
+import time
 import uuid
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from gemini_chat_backend.config import settings
 from gemini_chat_backend.core.deepseek import DeepSeekClient, DeepSeekError
-from gemini_chat_backend.core.react_orchestrator import ReActOrchestrator
 from gemini_chat_backend.core.reasoning_parser import (
     clean_reasoning_content,
     extract_thought_title,
+)
+from gemini_chat_backend.models.react import (
+    ReActAction,
+    ReActObservation,
+    ReActStep,
+    ReActThought,
 )
 from gemini_chat_backend.models.chat import ChatRequest, StreamEvent
 from gemini_chat_backend.tools.registry import get_tool_registry
@@ -49,6 +55,37 @@ def format_sse(event: StreamEvent) -> str:
     return f"data: {json.dumps(event.model_dump())}\n\n"
 
 
+def _ensure_thought_exists(
+    last_step: Optional[ReActStep],
+    tool_name: str,
+) -> Tuple[Optional[ReActStep], Optional[ReActThought]]:
+    """Ensure a thought step exists before creating an action.
+
+    If last step is not a thought, creates a placeholder thought.
+    This handles cases where DeepSeek sends tool_calls without reasoning_content.
+
+    Args:
+        last_step: The last ReAct step created
+        tool_name: Name of the tool being called (for placeholder context)
+
+    Returns:
+        Tuple of (updated last_step, created thought or None)
+    """
+    if last_step and last_step.type == "thought":
+        return last_step, None
+
+    # Create a placeholder thought
+    placeholder_content = f"Executing tool call without explicit reasoning: {tool_name}"
+    thought = ReActThought(
+        id=f"thought-{int(time.time() * 1000)}",
+        content=placeholder_content,
+        title="Implicit reasoning",
+        leads_to="action",
+    )
+
+    return thought, thought
+
+
 async def chat_stream(
     request: ChatRequest,
     client: DeepSeekClient,
@@ -79,34 +116,14 @@ async def chat_stream(
 
         # Current messages state (updated with each tool call)
         # Convert Pydantic models to dicts, ONLY include fields DeepSeek recognizes
-        def to_deepseek_message(msg: Any) -> Dict[str, Any]:
+        def to_deepseek_message(msg: Message) -> Dict[str, Any]:
             """Convert message to only DeepSeek-recognized fields."""
-            msg_dict = msg.model_dump() if hasattr(msg, "model_dump") else dict(msg)
-            # Also get the raw model to check extra fields
-            clean: Dict[str, Any] = {
-                "role": msg_dict.get("role", "user"),
-                "content": msg_dict.get("content", ""),
-            }
-            # Check both snake_case and camelCase (from dict keys and extra fields)
-            tool_calls = msg_dict.get("tool_calls") or msg_dict.get("toolCalls") or (hasattr(msg, "toolCalls") and msg.toolCalls)
-            tool_call_id = msg_dict.get("tool_call_id") or msg_dict.get("toolCallId") or (hasattr(msg, "toolCallId") and msg.toolCallId)
-            reasoning_content = msg_dict.get("reasoning_content") or msg_dict.get("reasoningContent") or (hasattr(msg, "reasoningContent") and msg.reasoningContent)
-
-            if tool_calls:
-                clean["tool_calls"] = tool_calls
-            if tool_call_id:
-                clean["tool_call_id"] = tool_call_id
-            if reasoning_content:
-                clean["reasoning_content"] = reasoning_content
-            return clean
+            return msg.model_dump(exclude_none=True)
 
         current_messages: List[Dict[str, Any]] = [to_deepseek_message(m) for m in request.messages]
 
-        # Create ReAct orchestrator
-        react_orchestrator = ReActOrchestrator(
-            lambda step: None,  # No-op callback, we'll send manually
-            max_iterations=10,
-        )
+        # Track the last ReAct step for in-place updates during streaming
+        last_step: Optional[ReActStep] = None
 
         # Main ReAct loop
         iteration = 0
@@ -145,7 +162,8 @@ async def chat_stream(
                     current_reasoning += reasoning
 
                     # Clean up the full reasoning content
-                    cleaned_reasoning = clean_reasoning_content(current_reasoning)
+                    # cleaned_reasoning = clean_reasoning_content(current_reasoning)
+                    cleaned_reasoning = current_reasoning
 
                     if cleaned_reasoning:
                         # Stream the cleaned reasoning (we stream the delta by just sending
@@ -156,10 +174,6 @@ async def chat_stream(
                             data=reasoning,
                         )
                         yield format_sse(event)
-
-                        # Record/Update thought in ReAct orchestrator with cleaned content
-                        steps = react_orchestrator.get_steps()
-                        last_step = steps[-1] if steps else None
 
                         # Extract a title for the thought
                         thought_title = extract_thought_title(cleaned_reasoning)
@@ -176,11 +190,13 @@ async def chat_stream(
                             yield format_sse(event)
                         else:
                             # No existing thought - create new one with cleaned content
-                            thought = await react_orchestrator.record_thought(
-                                cleaned_reasoning,
+                            thought = ReActThought(
+                                id=f"thought-{int(time.time() * 1000)}",
+                                content=cleaned_reasoning,
                                 title=thought_title,
                                 leads_to="action" if delta.get("tool_calls") else "response",
                             )
+                            last_step = thought
                             event = StreamEvent(
                                 type="react_step",
                                 data=thought.model_dump(mode="json", by_alias=True),
@@ -265,8 +281,23 @@ async def chat_stream(
                 )
                 yield format_sse(event)
 
-                # Record as action in ReAct orchestrator
-                action = await react_orchestrator.record_action(tool_call_data)
+                # Ensure a thought exists before creating an action
+                last_step, new_thought = _ensure_thought_exists(last_step, tool_name)
+
+                # If a placeholder thought was created, yield it
+                if new_thought:
+                    event = StreamEvent(
+                        type="react_step",
+                        data=new_thought.model_dump(mode="json", by_alias=True),
+                    )
+                    yield format_sse(event)
+
+                # Record as action
+                action = ReActAction(
+                    id=f"action-{int(time.time() * 1000)}",
+                    tool_call=tool_call_data,
+                )
+                last_step = action
                 event = StreamEvent(
                     type="react_step",
                     data=action.model_dump(mode="json", by_alias=True),
@@ -292,10 +323,12 @@ async def chat_stream(
                             yield format_sse(event)
 
                             # Record as observation
-                            observation = await react_orchestrator.record_observation(
-                                action.id,
+                            observation = ReActObservation(
+                                id=f"observation-{int(time.time() * 1000)}",
+                                action_id=action.id,
                                 result=result.result,
                             )
+                            last_step = observation
                             event = StreamEvent(
                                 type="react_step",
                                 data=observation.model_dump(mode="json", by_alias=True),
@@ -320,10 +353,12 @@ async def chat_stream(
                             yield format_sse(event)
 
                             # Record as observation with error
-                            observation = await react_orchestrator.record_observation(
-                                action.id,
+                            observation = ReActObservation(
+                                id=f"observation-{int(time.time() * 1000)}",
+                                action_id=action.id,
                                 error=result.error,
                             )
+                            last_step = observation
                             event = StreamEvent(
                                 type="react_step",
                                 data=observation.model_dump(mode="json", by_alias=True),
@@ -348,10 +383,12 @@ async def chat_stream(
                         )
                         yield format_sse(event)
 
-                        observation = await react_orchestrator.record_observation(
-                            action.id,
+                        observation = ReActObservation(
+                            id=f"observation-{int(time.time() * 1000)}",
+                            action_id=action.id,
                             error=str(e),
                         )
+                        last_step = observation
                         event = StreamEvent(
                             type="react_step",
                             data=observation.model_dump(mode="json", by_alias=True),
@@ -375,10 +412,12 @@ async def chat_stream(
                     )
                     yield format_sse(event)
 
-                    observation = await react_orchestrator.record_observation(
-                        action.id,
+                    observation = ReActObservation(
+                        id=f"observation-{int(time.time() * 1000)}",
+                        action_id=action.id,
                         error=error_msg,
                     )
+                    last_step = observation
                     event = StreamEvent(
                         type="react_step",
                         data=observation.model_dump(mode="json", by_alias=True),
