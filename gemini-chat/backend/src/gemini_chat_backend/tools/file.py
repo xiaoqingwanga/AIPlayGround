@@ -85,13 +85,13 @@ class FileReadTool(BaseTool):
 
 
 class FileWriteTool(BaseTool):
-    """Tool to write content to a file."""
+    """Tool to write content to a file with optional read-only mode."""
 
     def __init__(self) -> None:
         """Initialize file write tool."""
         super().__init__(
             name="file_write",
-            description="Write content to a file",
+            description="Write content to a file (read-only mode can be configured)",
             parameters={
                 "type": "object",
                 "properties": {
@@ -109,15 +109,16 @@ class FileWriteTool(BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
-        """Execute the file write tool.
-
-        Args:
-            **kwargs: Tool parameters (path, content)
-
-        Returns:
-            Tool execution result
-        """
+        """Execute the file write tool with read-only check."""
         try:
+            # Check if read-only mode is enabled via configuration
+            read_only_mode = getattr(settings, 'TOOL_READ_ONLY_MODE', False)
+            if read_only_mode:
+                return ToolResult(
+                    success=False,
+                    error="File write operations are disabled in read-only mode"
+                )
+
             file_path = kwargs.get("path", "")
             content = kwargs.get("content", "")
 

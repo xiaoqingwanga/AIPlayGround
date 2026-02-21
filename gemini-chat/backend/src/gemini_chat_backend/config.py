@@ -41,6 +41,7 @@ class Settings(BaseSettings):
 
     # Tool Configuration
     TOOL_WORKING_DIRECTORY: str = "."
+    TOOL_READ_ONLY_MODE: bool = Field(default=False, description="Enable read-only tool restrictions")
 
     # Server Configuration
     HOST: str = "0.0.0.0"

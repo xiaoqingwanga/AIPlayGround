@@ -5,19 +5,20 @@ import sys
 from typing import Any
 
 from gemini_chat_backend.tools.base import BaseTool, ToolResult
+from gemini_chat_backend.tools.code_analyzer import CodeAnalyzer
 from gemini_chat_backend.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 class PythonExecTool(BaseTool):
-    """Tool to execute Python code."""
+    """Tool to execute Python code with read-only restrictions."""
 
     def __init__(self) -> None:
         """Initialize Python exec tool."""
         super().__init__(
             name="python_exec",
-            description="Execute Python code (timeout: 30s). Use single quotes for strings inside code.",
+            description="Execute Python code (timeout: 30s, read-only mode). Use single quotes for strings inside code.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -29,20 +30,20 @@ class PythonExecTool(BaseTool):
                 "required": ["code"],
             },
         )
+        self._analyzer = CodeAnalyzer()
 
     async def execute(self, **kwargs: Any) -> ToolResult:
-        """Execute Python code.
-
-        Args:
-            **kwargs: Tool parameters (code)
-
-        Returns:
-            Tool execution result with stdout and stderr
-        """
+        """Execute Python code with read-only checks."""
         try:
             code = kwargs.get("code", "")
             if not code:
                 return ToolResult(success=False, error="Code is required")
+
+            # Check if code is safe (read-only)
+            is_safe, error_msg = self._analyzer.is_code_safe(code, language='python')
+            if not is_safe:
+                logger.warning(f"Blocked Python code execution: {error_msg}")
+                return ToolResult(success=False, error=error_msg)
 
             # Run Python code as subprocess - no need to escape quotes when passing as separate argument
             proc = await asyncio.create_subprocess_exec(
@@ -67,7 +68,7 @@ class PythonExecTool(BaseTool):
             stdout = stdout_bytes.decode("utf-8", errors="replace")
             stderr = stderr_bytes.decode("utf-8", errors="replace")
 
-            logger.info("Python code executed successfully")
+            logger.info("Python code executed successfully in read-only mode")
             return ToolResult(success=True, result={"stdout": stdout, "stderr": stderr})
 
         except Exception as e:
@@ -76,13 +77,13 @@ class PythonExecTool(BaseTool):
 
 
 class JSExecTool(BaseTool):
-    """Tool to execute JavaScript code."""
+    """Tool to execute JavaScript code with read-only restrictions."""
 
     def __init__(self) -> None:
         """Initialize JavaScript exec tool."""
         super().__init__(
             name="js_exec",
-            description="Execute JavaScript code (timeout: 5s)",
+            description="Execute JavaScript code (timeout: 5s, read-only mode)",
             parameters={
                 "type": "object",
                 "properties": {
@@ -94,20 +95,20 @@ class JSExecTool(BaseTool):
                 "required": ["code"],
             },
         )
+        self._analyzer = CodeAnalyzer()
 
     async def execute(self, **kwargs: Any) -> ToolResult:
-        """Execute JavaScript code.
-
-        Args:
-            **kwargs: Tool parameters (code)
-
-        Returns:
-            Tool execution result
-        """
+        """Execute JavaScript code with read-only checks."""
         try:
             code = kwargs.get("code", "")
             if not code:
                 return ToolResult(success=False, error="Code is required")
+
+            # Check if code is safe (read-only)
+            is_safe, error_msg = self._analyzer.is_code_safe(code, language='javascript')
+            if not is_safe:
+                logger.warning(f"Blocked JavaScript code execution: {error_msg}")
+                return ToolResult(success=False, error=error_msg)
 
             # Try to find node executable
             node_cmd = "node"
@@ -141,7 +142,7 @@ class JSExecTool(BaseTool):
             if stderr:
                 return ToolResult(success=False, error=stderr)
 
-            logger.info("JavaScript code executed successfully")
+            logger.info("JavaScript code executed successfully in read-only mode")
             return ToolResult(success=True, result={"result": stdout})
 
         except FileNotFoundError:
