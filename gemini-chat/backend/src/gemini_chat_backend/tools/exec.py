@@ -115,13 +115,12 @@ class JSExecTool(BaseTool):
             if sys.platform == "win32":
                 node_cmd = "node.exe"
 
-            # Escape quotes safely
-            escaped_code = code.replace("'", "\\'").replace("`", "\\`")
-
+            # No need to escape quotes when passing arguments separately to subprocess
+            # Similar to PythonExecTool which passes code directly to python -c
             proc = await asyncio.create_subprocess_exec(
                 node_cmd,
                 "-e",
-                escaped_code,
+                code,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
