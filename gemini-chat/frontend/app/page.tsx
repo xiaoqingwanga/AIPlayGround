@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Message, StreamEvent, ToolCall, ThinkingStep, Conversation, ReActStep, ReActThought, ReActAction, ReActObservation } from '@/lib/types';
+import { Message, StreamEvent, ToolCall, Conversation, ReActStep, ReActThought, ReActAction, ReActObservation } from '@/lib/types';
 
 const STORAGE_KEY = 'deepseek-chat-conversations';
 const SIDEBAR_WIDTH = 260;
