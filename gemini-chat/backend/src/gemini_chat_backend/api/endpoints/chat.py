@@ -10,10 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from gemini_chat_backend.config import settings
 from gemini_chat_backend.core.deepseek import DeepSeekClient, DeepSeekError
-from gemini_chat_backend.core.reasoning_parser import (
-    clean_reasoning_content,
-    extract_thought_title,
-)
+from gemini_chat_backend.core.reasoning_parser import extract_thought_title
 from gemini_chat_backend.models.react import (
     ReActAction,
     ReActObservation,
@@ -161,14 +158,8 @@ async def chat_stream(
                     reasoning = delta["reasoning_content"]
                     current_reasoning += reasoning
 
-                    # Clean up the full reasoning content
-                    # cleaned_reasoning = clean_reasoning_content(current_reasoning)
-                    cleaned_reasoning = current_reasoning
-
-                    if cleaned_reasoning:
-                        # Stream the cleaned reasoning (we stream the delta by just sending
-                        # the new chunk, but ensure we don't stream gibberish)
-                        # For streaming, we send the raw delta but the thought gets cleaned content
+                    if current_reasoning:
+                        # Stream the reasoning
                         event = StreamEvent(
                             type="reasoning",
                             data=reasoning,
@@ -176,11 +167,11 @@ async def chat_stream(
                         yield format_sse(event)
 
                         # Extract a title for the thought
-                        thought_title = extract_thought_title(cleaned_reasoning)
+                        thought_title = extract_thought_title(current_reasoning)
 
                         if last_step and last_step.type == "thought":
-                            # Update existing thought in-place with cleaned content
-                            last_step.content = cleaned_reasoning
+                            # Update existing thought in-place
+                            last_step.content = current_reasoning
                             if thought_title:
                                 last_step.title = thought_title
                             event = StreamEvent(
@@ -189,10 +180,10 @@ async def chat_stream(
                             )
                             yield format_sse(event)
                         else:
-                            # No existing thought - create new one with cleaned content
+                            # No existing thought - create new one
                             thought = ReActThought(
                                 id=f"thought-{int(time.time() * 1000)}",
-                                content=cleaned_reasoning,
+                                content=current_reasoning,
                                 title=thought_title,
                                 leads_to="action" if delta.get("tool_calls") else "response",
                             )
