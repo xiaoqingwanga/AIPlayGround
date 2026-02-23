@@ -1,6 +1,6 @@
 # AIPlayGround
 
-A monorepo for implementing various "AI toys" — experimental AI applications designed for learning, exploration, and pushing the boundaries of what's possible with AI APIs.
+A monorepo for implementing various "AI toys" — experimental AI applications designed for learning, exploration, and trying out different AI API capabilities.
 
 ## AI Toys
 
